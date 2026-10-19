@@ -1,4 +1,5 @@
 import { emptyBill, emptyInvoice, SavedBill, ShippingBillFormValues } from './model'
+import { getDemoData, saveBill } from './demo-store'
 
 const BASE_URL =
   import.meta.env.VITE_BASE_URL ||
@@ -351,12 +352,20 @@ export const API_SEED_SHIPPING_BILLS = [
 let internalBills: SavedBill[] = normalizeApiBills(API_SEED_SHIPPING_BILLS)
 
 export const shippingBillService = {
+
+  /**
+ * Save a shipping bill locally.
+ */
+saveLocal(values: ShippingBillFormValues, id?: number): SavedBill {
+  return saveBill(values, id)
+},
   /**
    * Return initial in-memory bills
    */
   getInitialBills(): SavedBill[] {
-    return internalBills
-  },
+  const localBills = getDemoData().bills
+  return [...localBills, ...internalBills]
+},
 
   /**
    * Find bill by id
@@ -413,78 +422,138 @@ export const shippingBillService = {
    * Download shipping bill flat file (.sb) directly in the browser.
    * Tries backend API first; falls back to generating .sb flat file locally from bill data.
    */
-  async downloadFlatFile(
-    id: string | number,
-    billData?: SavedBill,
-    fallbackFilename?: string
-  ): Promise<{ source: 'api' | 'local' }> {
-    let filename = fallbackFilename || `shipping_bill_${id}.sb`
+async downloadFlatFile(
+  id: string | number,
+  billData?: SavedBill,
+  fallbackFilename?: string
+): Promise<{ source: 'api' | 'local' }> {
+  let filename = fallbackFilename || `shipping_bill_${id}.sb`
+
+  // Step 1: Try downloading the flat file from the backend API
+  try {
+    const controller = new AbortController()
+
+    const timeoutId = window.setTimeout(() => {
+      controller.abort()
+    }, 1500)
+
+    let response: Response
 
     try {
-      const response = await fetch(`${BASE_URL}/api/shipping-bills/${id}/flat-file`, {
-        method: 'GET',
-        headers: {
-          Accept: '*/*',
-          Authorization: DEFAULT_HEADERS.Authorization
+      response = await fetch(
+        `${BASE_URL}/api/shipping-bills/${id}/flat-file`,
+        {
+          method: 'GET',
+          headers: {
+            Accept: '*/*',
+            Authorization: DEFAULT_HEADERS.Authorization,
+          },
+          signal: controller.signal,
         }
-      })
+      )
+    } finally {
+      window.clearTimeout(timeoutId)
+    }
 
-      if (response.ok) {
-        const contentType = response.headers.get('content-type') || ''
-        let blob: Blob
+    if (response.ok) {
+      const contentType = response.headers.get('content-type') || ''
+      let blob: Blob
 
-        const disposition = response.headers.get('content-disposition')
-        if (disposition && disposition.includes('filename=')) {
-          const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-          if (match && match[1]) {
-            filename = match[1].replace(/['"]/g, '')
-          }
+      // Get the filename from the API response, if available
+      const disposition = response.headers.get('content-disposition')
+
+      if (disposition && disposition.includes('filename=')) {
+        const match = disposition.match(
+          /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/
+        )
+
+        if (match && match[1]) {
+          filename = match[1].replace(/['"]/g, '')
         }
-
-        if (contentType.includes('application/json')) {
-          const json = await response.json()
-          const content =
-            typeof json === 'string'
-              ? json
-              : json.file || json.content || json.data || JSON.stringify(json, null, 2)
-          blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-        } else {
-          blob = await response.blob()
-        }
-
-        triggerBlobDownload(blob, filename)
-        return { source: 'api' }
       }
-    } catch {
-      // Backend API offline or unreachable - fall back to local generation
+
+      // Handle JSON and regular file responses
+      if (contentType.includes('application/json')) {
+        const json = await response.json()
+
+        const content =
+          typeof json === 'string'
+            ? json
+            : json.file ||
+              json.content ||
+              json.data ||
+              JSON.stringify(json, null, 2)
+
+        blob = new Blob([content], {
+          type: 'text/plain;charset=utf-8',
+        })
+      } else {
+        blob = await response.blob()
+      }
+
+      triggerBlobDownload(blob, filename)
+
+      return { source: 'api' }
     }
+  } catch {
+    // API is unavailable or the request failed.
+    // Continue with local file generation below.
+  }
 
-    if (billData) {
-      const flatFileContent = generateFlatFileContent(billData)
-      const blob = new Blob([flatFileContent], { type: 'text/plain;charset=utf-8' })
-      const safeJob = billData.values.jobNumber || billData.id
-      triggerBlobDownload(blob, `shipping_bill_${safeJob}.sb`)
-      return { source: 'local' }
-    }
+  // Step 2: If the API fails, generate the flat file locally
+  if (billData) {
+    const flatFileContent = generateFlatFileContent(billData)
 
-    throw new Error(`Backend server (${BASE_URL}) is offline and no local bill data was found.`)
-  },
+    const blob = new Blob([flatFileContent], {
+      type: 'text/plain;charset=utf-8',
+    })
 
+    const safeJob = billData.values.jobNumber || billData.id
+
+    triggerBlobDownload(blob, `shipping_bill_${safeJob}.sb`)
+
+    return { source: 'local' }
+  }
+
+  // Step 3: If neither API nor local data is available, throw an error
+  throw new Error(
+    `Backend server (${BASE_URL}) is offline and no local bill data was found.`
+  )
+},
   /**
    * POST /api/shipping-bills
    * Upsert shipping bill (per shipping_bill.http)
    */
-  async upsert(values: ShippingBillFormValues) {
-    const payload = toHttpShippingBillPayload(values)
+async upsert(values: ShippingBillFormValues) {
+  const payload = toHttpShippingBillPayload(values)
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+  try {
     const response = await fetch(`${BASE_URL}/api/shipping-bills`, {
       method: 'POST',
       headers: DEFAULT_HEADERS,
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     })
+
     if (!response.ok) {
-      throw new Error(`Failed to save shipping bill: ${response.status} ${response.statusText}`)
+      throw new Error(
+        `Failed to save shipping bill: ${response.status} ${response.statusText}`
+      )
     }
-    return response.json()
+
+    return await response.json()
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Backend request timed out after 5 seconds')
+    }
+
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
   }
+}
 }
 

@@ -35,22 +35,31 @@ export default function ListDashboard() {
     fetchBills()
   }, [])
 
-  const handleDownloadFlatFile = async (bill: SavedBill) => {
-    try {
-      setDownloadingId(bill.id)
-      const res = await shippingBillService.downloadFlatFile(bill.id, bill)
-      if (res.source === 'api') {
-        toast.success('Flat file downloaded from backend API')
-      } else {
-        toast.success(`Flat file (.sb) generated and downloaded for #${bill.values.jobNumber || bill.id}`)
-      }
-    } catch (err: any) {
-      console.warn('Flat file notice:', err)
-      toast.error('Failed to generate flat file')
-    } finally {
-      setDownloadingId(null)
+const handleDownloadFlatFile = async (bill: SavedBill) => {
+  setDownloadingId(bill.id)
+
+  // Browser ko loading state render karne ka time do
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  try {
+    const res = await shippingBillService.downloadFlatFile(bill.id, bill)
+
+    if (res.source === 'local') {
+      toast.success(
+        `Flat file generated and downloaded for #${
+          bill.values.jobNumber || bill.id
+        }`
+      )
+    } else {
+      toast.success('Flat file downloaded from backend API')
     }
+  } catch (err) {
+    console.error('Flat file download failed:', err)
+    toast.error('Failed to generate flat file')
+  } finally {
+    setDownloadingId(null)
   }
+}
 
   const filtered = bills
     .filter((bill) => {
@@ -73,13 +82,9 @@ export default function ListDashboard() {
       return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA)
     })
 
-  const uniqueExportersCount = new Set(
-    bills.map((b) => b.values.exporterName).filter(Boolean)
-  ).size
+  const uniqueExportersCount = new Set(bills.map((b) => b.values.exporterName).filter(Boolean)).size
 
-  const uniqueConsigneesCount = new Set(
-    bills.map((b) => b.values.consigneeName).filter(Boolean)
-  ).size
+  const uniqueConsigneesCount = new Set(bills.map((b) => b.values.consigneeName).filter(Boolean)).size
 
   return (
     <div className="space-y-6">
@@ -172,7 +177,11 @@ export default function ListDashboard() {
                       <td>
                         <Badge variant="secondary">Draft</Badge>
                       </td>
-                      <td>{bill.updated && !isNaN(new Date(bill.updated).getTime()) ? new Date(bill.updated).toLocaleDateString() : '—'}</td>
+                      <td>
+                        {bill.updated && !isNaN(new Date(bill.updated).getTime())
+                          ? new Date(bill.updated).toLocaleDateString()
+                          : '—'}
+                      </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button

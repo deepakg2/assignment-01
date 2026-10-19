@@ -1,4 +1,3 @@
-import { documentCodes } from '@/data/e-sanchit-codes'
 import { quantityCodes } from '@/data/quantity-code'
 import schemeCodes from '@/data/scheme-codes'
 import { stateOptions } from '@/data/states'
@@ -7,23 +6,17 @@ import { cargoOptions, contractTypes, paymentTypes, priceInclusionTypes, sealTyp
 import { BranchDialog, PartyDialog } from './party-dialogs'
 import { routes } from '@/shared/route-paths'
 import { s, useFieldArray, useForm } from 'core/form'
-import { Form, SubmitButton } from 'core/form/components'
+import { Form } from 'core/form/components'
 import { navigate, useParams } from 'core/routing'
 import { toast } from 'core/toast-manager'
-import { RrCaretDown } from 'icons/rr/fi-rr-caret-down'
 import { useEffect, useRef, useState } from 'react'
-import { getFormContext, RegisterOptions, useController } from 'ui/form'
 import { Button } from 'ui/basic/button'
 import { Card, CardContent, CardHeader } from 'ui/basic/card'
 import { Checkbox } from 'ui/inputs/checkbox'
-import { InputError } from 'ui/inputs/error'
 import { Input } from 'ui/inputs/input'
 import { Select } from 'ui/inputs/select'
-import { Popover, PopoverContent, PopoverTrigger } from 'ui/interactive/popover'
-import { PopoverContext } from 'ui/interactive/popover-context'
 import { Tabs, TabsList, TabsTrigger } from 'ui/interactive/tabs'
-import { clsx, getContext } from 'ui/utils'
-import { getDemoData, saveBill, useDemoData } from './demo-store'
+import { useDemoData } from './demo-store'
 import { shippingBillService } from './shipping-bill-service'
 import { getMarksAndNumbersOptions, MarksAndNumbersOption } from './marks-and-numbers-source'
 import {
@@ -44,6 +37,13 @@ import {
 } from './model'
 import { partyMockService } from './party-mock-service'
 import { workflowSteps } from './workflow'
+import { SectionHeading } from './section-heading'
+import { Advanced } from './advanced'
+import { PersistentTab } from './persistent-tab'
+import { AsyncPartySelect } from './async-party-select'
+import { BillFormContext } from './form-context'
+import { DocumentItem } from './document-item'
+import { PartyFields } from './party-fields'
 
 const positive = s.string().refine((value) => (Number(value) > 0 ? undefined : 'Enter a number above zero'))
 
@@ -95,7 +95,6 @@ const billSchema = s.object({
   registrationNumber: s.string().optional()
 })
 
-type BillFormContext = ReturnType<typeof useForm<ShippingBillFormValues>>
 
 interface QuickAdd {
   kind: 'exporter' | 'business'
@@ -104,7 +103,7 @@ interface QuickAdd {
   itemIndex?: number
 }
 
-type BranchPath =
+ export type BranchPath =
   | 'exporterBranchId'
   | 'consigneeBranchId'
   | `invoices.${number}.buyerBranchId`
@@ -121,375 +120,6 @@ const portOptions = ports.map((port) => ({ value: port.code, label: `${port.name
 
 const currencyOptions = ['USD', 'EUR', 'INR', 'AED', 'GBP', 'SGD'].map((value) => ({ value, label: value }))
 const dateType = 'date' as 'text'
-
-function SectionHeading({ title, description }: { title: string; description?: string }) {
-  return (
-    <div className="mb-4">
-      <h2 className="text-base font-semibold text-gray-950">{title}</h2>
-      {description && <p className="mt-1 text-sm text-gray-500">{description}</p>}
-    </div>
-  )
-}
-
-function Advanced({
-  title,
-  children,
-  open,
-  onToggle
-}: {
-  title: string
-  children: React.ReactNode
-  open?: boolean
-  onToggle?: (isOpen: boolean) => void
-}) {
-  return (
-    <details
-      className="rounded-lg border border-gray-200 bg-gray-50/50 p-4"
-      open={open}
-      onToggle={(e) => onToggle?.(e.currentTarget.open)}>
-      <summary className="cursor-pointer text-sm font-medium text-gray-700">{title}</summary>
-      <div className="mt-4">{children}</div>
-    </details>
-  )
-}
-
-interface PersistentTabProps {
-  value: string
-  activeTab: string
-  children: React.ReactNode
-  className?: string
-}
-
-// Keep fields registered while another tab is open so RHF validates the entire bill on submit.
-function PersistentTab({ value, activeTab, children, className }: PersistentTabProps) {
-  return (
-    <div role="tabpanel" hidden={activeTab !== value} className={`mt-3 ${className}`}>
-      {children}
-    </div>
-  )
-}
-
-interface AsyncOption {
-  value: string
-  label: string
-  sublabel?: string
-}
-
-interface AsyncPartySelectProps {
-  name: string
-  placeholder?: string
-  disabled?: boolean
-  className?: string
-  rules?: RegisterOptions
-  deps?: React.DependencyList
-  fetchOptions: (query: string) => Promise<AsyncOption[]>
-  getInitialLabel?: (id: string) => Promise<string>
-}
-
-function AsyncPartySelect({
-  name,
-  placeholder = 'Search...',
-  disabled = false,
-  className,
-  rules,
-  deps = [],
-  fetchOptions,
-  getInitialLabel
-}: AsyncPartySelectProps) {
-  const ctx = getFormContext()
-  const {
-    field: { onChange, value, ref }
-  } = useController({
-    name,
-    control: ctx.hooks.control,
-    rules: ctx.schema.shape[name] ?? rules,
-    disabled
-  })
-
-  const [query, setQuery] = useState('')
-  const [options, setOptions] = useState<AsyncOption[]>([])
-  const [loading, setLoading] = useState(false)
-  const [selectedLabel, setSelectedLabel] = useState('')
-  const [isOpen, setIsOpen] = useState(false)
-
-  const fetchOptionsRef = useRef(fetchOptions)
-  fetchOptionsRef.current = fetchOptions
-
-  const getInitialLabelRef = useRef(getInitialLabel)
-  getInitialLabelRef.current = getInitialLabel
-
-  // Fetch label when selected value changes or on mount
-  useEffect(() => {
-    let active = true
-    if (value) {
-      if (getInitialLabelRef.current) {
-        void getInitialLabelRef.current(String(value)).then((lbl) => {
-          if (active && lbl) setSelectedLabel(lbl)
-        })
-      } else {
-        const found = options.find((o) => o.value === String(value))
-        if (found) setSelectedLabel(found.label)
-      }
-    } else {
-      setSelectedLabel('')
-    }
-    return () => {
-      active = false
-    }
-  }, [value, ...deps])
-
-  // Fetch search results asynchronously whenever query changes or popover opens
-  useEffect(() => {
-    if (!isOpen && !query) return
-
-    let active = true
-    setLoading(true)
-    const timer = setTimeout(() => {
-      void fetchOptionsRef
-        .current(query)
-        .then((results) => {
-          if (active) {
-            setOptions(results)
-            setLoading(false)
-          }
-        })
-        .catch(() => {
-          if (active) {
-            setOptions([])
-            setLoading(false)
-          }
-        })
-    }, 200)
-
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [query, isOpen, ...deps])
-
-  return (
-    <div>
-      <input type="hidden" name={name} value={value ?? ''} ref={ref} disabled={disabled} />
-      <Popover
-        placement="bottom-start"
-        fallbackPlacements={['top-start']}
-        onOpenCallback={(open) => setIsOpen(open)}>
-        <PopoverTrigger
-          className={clsx(
-            'outline-focus-select group flex w-full cursor-pointer items-center justify-between rounded border border-gray-200 pr-2 hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50',
-            className || 'bg-white',
-            disabled && 'cursor-not-allowed opacity-50'
-          )}
-          disabled={disabled}>
-          <div className="flex items-center p-2 text-sm">
-            <span className={selectedLabel ? 'font-medium text-gray-900' : 'text-gray-400'}>
-              {selectedLabel || placeholder}
-            </span>
-          </div>
-          <RrCaretDown className="size-4 text-gray-400 transition-transform group-data-[state=open]:rotate-180" />
-        </PopoverTrigger>
-        <InputError name={name} />
-        <PopoverContent className="overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
-          <div className="border-b border-gray-100 p-2">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Type to search..."
-              className="focus:border-primary-500 focus:ring-primary-500 w-full rounded border border-gray-200 px-2.5 py-1.5 text-sm outline-none focus:ring-1"
-              autoFocus
-            />
-          </div>
-          <div className="max-h-56 overflow-y-auto p-1">
-            {loading ? (
-              <div className="p-3 text-center text-xs text-gray-500">Searching mock service...</div>
-            ) : options.length === 0 ? (
-              <div className="p-3 text-center text-xs text-gray-400">No matching results found</div>
-            ) : (
-              options.map((opt) => (
-                <PopoverOptionItem
-                  key={opt.value}
-                  option={opt}
-                  isSelected={String(value) === opt.value}
-                  onSelect={(selected) => {
-                    onChange(selected.value)
-                    ctx.hooks.setValue(name, selected.value, {
-                      shouldValidate: true,
-                      shouldDirty: true,
-                      shouldTouch: true
-                    })
-                    setSelectedLabel(selected.label)
-                    setQuery('')
-                  }}
-                />
-              ))
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
-  )
-}
-
-function PopoverOptionItem({
-  option,
-  isSelected,
-  onSelect
-}: {
-  option: AsyncOption
-  isSelected: boolean
-  onSelect: (opt: AsyncOption) => void
-}) {
-  const { setOpen } = getContext(PopoverContext)
-
-  return (
-    <div
-      onClick={() => {
-        onSelect(option)
-        setOpen(false)
-      }}
-      className={clsx(
-        'flex cursor-pointer flex-col rounded p-2 text-sm transition-colors',
-        isSelected ? 'bg-primary-50 text-primary-900 font-semibold' : 'text-gray-950 hover:bg-gray-100'
-      )}>
-      <span>{option.label}</span>
-      {option.sublabel && <span className="text-xs text-gray-500">{option.sublabel}</span>}
-    </div>
-  )
-}
-
-function PartyFields({
-  formCtx,
-  ownerName,
-  branchName,
-  label,
-  kind,
-  parties,
-  required = true,
-  onAddBranch,
-  onQuickAdd
-}: {
-  formCtx: BillFormContext
-  ownerName:
-  | 'exporterId'
-  | 'consigneeId'
-  | `invoices.${number}.buyerId`
-  | `invoices.${number}.thirdPartyId`
-  | `invoices.${number}.items.${number}.itemThirdPartyId`
-  branchName: BranchPath
-  label: string
-  kind: 'exporter' | 'business'
-  parties: (Exporter | Business)[]
-  required?: boolean
-  onAddBranch: (ownerId: number) => void
-  onQuickAdd: () => void
-}) {
-  const ownerId = formCtx.hooks.watch(ownerName)
-  const { exporters, businesses } = getDemoData()
-  const owner =
-    kind === 'exporter'
-      ? (exporters.find((party) => String(party.id) === ownerId) ??
-        parties.find((party) => String(party.id) === ownerId))
-      : (businesses.find((party) => String(party.id) === ownerId) ??
-        parties.find((party) => String(party.id) === ownerId))
-
-  useEffect(() => {
-    const selectedBranch = formCtx.hooks.getValues(branchName)
-    if (
-      selectedBranch &&
-      owner &&
-      owner.branches.length > 0 &&
-      !owner.branches.some((branch) => String(branch.id) === selectedBranch)
-    ) {
-      formCtx.hooks.setValue(branchName, '', { shouldValidate: true })
-    }
-  }, [branchName, formCtx.hooks, owner])
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <div>
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">{label}</span>
-          <button type="button" className="text-primary-700 text-xs font-medium hover:underline" onClick={onQuickAdd}>
-            + Add new
-          </button>
-        </div>
-        <AsyncPartySelect
-          name={ownerName}
-          placeholder={`Search & select ${kind}...`}
-          rules={{ required }}
-          fetchOptions={async (query) => {
-            if (kind === 'exporter') {
-              const res = await partyMockService.searchExporters(query)
-              return res.map((item) => ({
-                value: String(item.id),
-                label: item.name,
-                sublabel: item.iec ? `IEC: ${item.iec}` : undefined
-              }))
-            } else {
-              const res = await partyMockService.searchConsignees(query)
-              return res.map((item) => ({
-                value: String(item.id),
-                label: item.name
-              }))
-            }
-          }}
-          getInitialLabel={async (id) => {
-            if (kind === 'exporter') {
-              const item = await partyMockService.getExporterById(id)
-              return item ? item.name : ''
-            } else {
-              const item = await partyMockService.getConsigneeById(id)
-              return item ? item.name : ''
-            }
-          }}
-        />
-      </div>
-      <div>
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">Branch / address</span>
-          {owner && (
-            <button
-              type="button"
-              className="text-primary-700 text-xs font-medium hover:underline"
-              onClick={() => onAddBranch(owner.id)}>
-              + Add branch
-            </button>
-          )}
-        </div>
-        <AsyncPartySelect
-          name={branchName}
-          placeholder={owner ? 'Search & select branch...' : `Choose ${kind} first`}
-          disabled={!owner}
-          rules={{ required: required || !!ownerId }}
-          deps={[ownerId]}
-          fetchOptions={async (query) => {
-            if (!ownerId) return []
-            if (kind === 'exporter') {
-              const res = await partyMockService.searchExporterBranches(ownerId, query)
-              return res.map((branch) => ({
-                value: String(branch.id),
-                label: `${branch.branchName} · ${branch.city}`,
-                sublabel: branch.address1
-              }))
-            } else {
-              const res = await partyMockService.searchConsigneeBranches(ownerId, query)
-              return res.map((branch) => ({
-                value: String(branch.id),
-                label: `${branch.branchName} · ${branch.city}`,
-                sublabel: branch.address1
-              }))
-            }
-          }}
-          getInitialLabel={async (id) => {
-            const branch = owner?.branches.find((b) => String(b.id) === id)
-            return branch ? `${branch.branchName} · ${branch.city}` : ''
-          }}
-        />
-      </div>
-    </div>
-  )
-}
 
 function InvoiceEditor({
   formCtx,
@@ -540,7 +170,7 @@ function InvoiceEditor({
           <Input label="Invoice number" {...register(`invoices.${index}.invoiceNumber`)} />
           <Input label="Invoice date" type={dateType} {...register(`invoices.${index}.invoiceDate`)} />
           <div className="flex gap-2">
-            <div className="w-[100px] shrink-0">
+            <div className="w-25 shrink-0">
               <Select<ShippingBillFormValues>
                 label="Currency"
                 name={`invoices.${index}.currency`}
@@ -995,136 +625,6 @@ function InvoiceEditor({
   )
 }
 
-function DocumentItem({ formCtx, index, onRemove }: { formCtx: BillFormContext; index: number; onRemove: () => void }) {
-  const { register, watch } = formCtx.hooks
-  const documentValues = watch(`documents.${index}`)
-
-  const hasCustomValues = Boolean(
-    documentValues?.placeOfIssue ||
-    documentValues?.invoiceSerialNumber ||
-    documentValues?.itemSerialNumber ||
-    documentValues?.issuingPartyCode ||
-    documentValues?.issuingPartyName ||
-    documentValues?.issuingPartyAddress1 ||
-    documentValues?.issuingPartyAddress2 ||
-    documentValues?.issuingPartyCity ||
-    documentValues?.issuingPartyPin ||
-    documentValues?.beneficiaryPartyCode ||
-    documentValues?.beneficiaryPartyName ||
-    documentValues?.beneficiaryPartyAddress1 ||
-    documentValues?.beneficiaryPartyAddress2 ||
-    documentValues?.beneficiaryPartyCity ||
-    documentValues?.beneficiaryPartyPin ||
-    documentValues?.fileType ||
-    documentValues?.icegateId
-  )
-
-  const [showCustomDetails, setShowCustomDetails] = useState(hasCustomValues)
-
-  return (
-    <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-3">
-      <div className="mb-1 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">Document {index + 1}</h3>
-        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onRemove}>
-          Remove
-        </Button>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div>
-          <span className="mb-1 block text-sm font-medium text-gray-700">Document type code</span>
-          <AsyncPartySelect
-            name={`documents.${index}.documentTypeCode`}
-            placeholder="Search document type..."
-            fetchOptions={async (query) => {
-              const q = query.toLowerCase().trim()
-              const filtered = documentCodes.filter(
-                (doc) => doc.label.toLowerCase().includes(q) || doc.value.toLowerCase().includes(q)
-              )
-              return filtered.map((doc) => ({
-                value: doc.value,
-                label: doc.label
-              }))
-            }}
-            getInitialLabel={async (val) => {
-              const found = documentCodes.find((doc) => doc.value === val || doc.label === val)
-              return found ? found.label : val
-            }}
-          />
-        </div>
-        <Input label="Image reference number" {...register(`documents.${index}.imageReferenceNumber`)} />
-        <Input label="Issue date" type={dateType} {...register(`documents.${index}.documentIssueDate`)} />
-      </div>
-      <Advanced
-        title="Issuing party and ICEGATE details"
-        open={showCustomDetails}
-        onToggle={(isOpen) => setShowCustomDetails(isOpen)}>
-        <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Input label="Reference number" {...register(`documents.${index}.documentReferenceNumber`)} />
-          <Input label="Expiry date" type={dateType} {...register(`documents.${index}.documentExpiryDate`)} />
-          <Input label="Invoice serial number" type="number" {...register(`documents.${index}.invoiceSerialNumber`)} />
-          <Input label="Item serial number" type="number" {...register(`documents.${index}.itemSerialNumber`)} />
-          <div>
-            <span className="mb-1 block text-sm font-medium text-gray-700">File type</span>
-            <AsyncPartySelect
-              name={`documents.${index}.fileType`}
-              placeholder="Search file type..."
-              className="bg-transparent"
-              fetchOptions={async (query) => {
-                const q = query.toLowerCase().trim()
-                const options = [{ value: 'pdf', label: 'PDF' }]
-                return options.filter(
-                  (doc) => doc.label.toLowerCase().includes(q) || doc.value.toLowerCase().includes(q)
-                )
-              }}
-              getInitialLabel={async (val) => {
-                const found = [{ value: 'pdf', label: 'PDF' }].find((doc) => doc.value === val || doc.label === val)
-                return found ? found.label : val
-              }}
-            />
-          </div>
-          <Input label="Place of issue" {...register(`documents.${index}.placeOfIssue`)} />
-        </div>
-
-        <div className="flex flex-col gap-4">
-          <Advanced title="Issuing & Beneficiary">
-            <div className="flex flex-col gap-6 pt-2">
-              <div>
-                <h3 className="mb-3 text-sm font-semibold text-gray-900">Issuing Details</h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <Input label="Issuing party code" {...register(`documents.${index}.issuingPartyCode`)} />
-                  <Input label="Issuing party name" {...register(`documents.${index}.issuingPartyName`)} />
-                  <Input label="Issuing address line 1" {...register(`documents.${index}.issuingPartyAddress1`)} />
-                  <Input label="Issuing address line 2" {...register(`documents.${index}.issuingPartyAddress2`)} />
-                  <Input label="Issuing city" {...register(`documents.${index}.issuingPartyCity`)} />
-                  <Input label="Issuing postal code" {...register(`documents.${index}.issuingPartyPin`)} />
-                </div>
-              </div>
-
-              <div className="border-t border-gray-100 pt-5">
-                <h3 className="mb-3 text-sm font-semibold text-gray-900">Beneficiary Details</h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <Input label="Beneficiary code" {...register(`documents.${index}.beneficiaryPartyCode`)} />
-                  <Input label="Beneficiary name" {...register(`documents.${index}.beneficiaryPartyName`)} />
-                  <Input
-                    label="Beneficiary address line 1"
-                    {...register(`documents.${index}.beneficiaryPartyAddress1`)}
-                  />
-                  <Input
-                    label="Beneficiary address line 2"
-                    {...register(`documents.${index}.beneficiaryPartyAddress2`)}
-                  />
-                  <Input label="Beneficiary city" {...register(`documents.${index}.beneficiaryPartyCity`)} />
-                  <Input label="Beneficiary postal code" {...register(`documents.${index}.beneficiaryPartyPin`)} />
-                </div>
-              </div>
-            </div>
-          </Advanced>
-        </div>
-      </Advanced>
-    </div>
-  )
-}
-
 function BillEditor({ bill }: { bill?: SavedBill }) {
   const { exporters, businesses } = useDemoData()
   const formCtx = useForm<ShippingBillFormValues>(billSchema, { defaultValues: bill?.values ?? emptyBill() })
@@ -1216,7 +716,7 @@ function BillEditor({ bill }: { bill?: SavedBill }) {
 
   async function handleSave(data: ShippingBillFormValues) {
     try {
-      const saved = saveBill(data, draftId)
+      const saved = shippingBillService.saveLocal(data, draftId)
       setDraftId(saved.id)
       console.log('Shipping bill save payload', saved.payload)
 
@@ -1260,10 +760,6 @@ function BillEditor({ bill }: { bill?: SavedBill }) {
       setValue(`invoices.${quickAdd.invoiceIndex}.${field}BranchId`, String(branchId), { shouldValidate: true })
     }
   }
-
-  const exporter = exporters.find((item) => String(item.id) === values.exporterId)
-  const consignee = businesses.find((item) => String(item.id) === values.consigneeId)
-  const totalLines = values.invoices.reduce((sum, invoice) => sum + invoice.items.length, 0)
 
   return (
     <div className="space-y-5">
@@ -1696,7 +1192,7 @@ function BillEditor({ bill }: { bill?: SavedBill }) {
                 type="button"
                 onClick={() => {
                   const current = formCtx.hooks.getValues()
-                  const saved = saveBill(current, draftId)
+                  const saved = shippingBillService.saveLocal(current, draftId)
                   setDraftId(saved.id)
                   setActiveTab(activeTab === 'documents' ? 'invoices' : 'details')
                 }}>
@@ -1709,7 +1205,7 @@ function BillEditor({ bill }: { bill?: SavedBill }) {
                 onClick={(e) => {
                   e.preventDefault()
                   const current = formCtx.hooks.getValues()
-                  const saved = saveBill(current, draftId)
+                  const saved = shippingBillService.saveLocal(current, draftId)
                   setDraftId(saved.id)
                   toast.success('Details saved')
                   setActiveTab(activeTab === 'details' ? 'invoices' : 'documents')

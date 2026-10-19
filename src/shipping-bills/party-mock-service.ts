@@ -81,6 +81,23 @@ export const partyMockService = {
   },
 
   /**
+ * Fetch a party by ID with its branches.
+ */
+async getPartyById(
+  kind: 'exporter' | 'business',
+  id: string
+): Promise<Exporter | Business | undefined> {
+  const { exporters, businesses } = getDemoData()
+
+  const party =
+    kind === 'exporter'
+      ? exporters.find((item) => String(item.id) === id)
+      : businesses.find((item) => String(item.id) === id)
+
+  return delay(party, 100)
+},
+
+  /**
    * Search Port of Loading (Indian ports: code starts with 'IN')
    */
   async searchLoadingPorts(query: string): Promise<PortOption[]> {
